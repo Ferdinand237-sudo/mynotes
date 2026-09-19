@@ -6,8 +6,9 @@ import 'package:mynotes/data/notes_database.dart';
 import 'package:mynotes/models/note.dart';
 
 class EditorPage extends StatefulWidget {
-  const EditorPage({super.key, this.note});
+  const EditorPage({super.key, this.note, required this.userId});
   final Note? note;
+  final int userId;
   @override
   State<EditorPage> createState() => _EditorPageState();
 }
@@ -30,19 +31,22 @@ class _EditorPageState extends State<EditorPage> {
     setState(() => _saving = true);
 
     try {
-      await NotesDatabase.instance.save(
-        Note(
-          id: widget.note?.id,
-          title: _title.text.trim(),
-          content: _content.text.trim(),
-          createdAt: widget.note?.createdAt ?? DateTime.now(),
-        ),
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          throw TimeoutException('Enregistrement de note trop long');
-        },
-      );
+      await NotesDatabase.instance
+          .save(
+            Note(
+              id: widget.note?.id,
+              title: _title.text.trim(),
+              content: _content.text.trim(),
+              createdAt: widget.note?.createdAt ?? DateTime.now(),
+            ),
+            userId: widget.userId,
+          )
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException('Enregistrement de note trop long');
+            },
+          );
 
       if (!mounted) return;
       Navigator.pop(context);

@@ -3,18 +3,20 @@ import 'package:mynotes/core/app_theme.dart';
 import 'package:mynotes/screens/login_page.dart';
 
 class AppDrawer extends StatelessWidget {
-  const AppDrawer({super.key});
+  const AppDrawer({super.key, required this.username});
+
+  final String username;
   @override
   Widget build(BuildContext context) => Drawer(
     child: SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(24),
             child: Row(
               children: [
-                CircleAvatar(
+                const CircleAvatar(
                   radius: 25,
                   backgroundColor: Color(0xFFE1EBFA),
                   child: Icon(Icons.person, color: Color(0xFF60769A)),
@@ -24,11 +26,11 @@ class AppDrawer extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'John Doe',
+                      username,
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                     Text(
-                      'john@example.com',
+                      'Compte local',
                       style: TextStyle(fontSize: 12, color: AppColors.muted),
                     ),
                   ],

@@ -1,74 +1,144 @@
-import 'package:mynotes/models/note.dart';
-import 'package:path/path.dart' as path;
-import 'package:sqflite/sqflite.dart';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+import 'package:mynotes/models/note.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class UsernameAlreadyUsedException implements Exception {}
+
+/// Local storage used by both Android and Chrome.
+///
+/// On Android it uses SharedPreferences; in Chrome it uses the browser's local
+/// storage. This keeps the account and note flow identical on both targets.
 class NotesDatabase {
   NotesDatabase._();
 
   static final instance = NotesDatabase._();
-  static const _databaseName = 'mynotes.db';
-  static const _tableName = 'notes';
+  static const _usersKey = 'mynotes.users';
+  static const _notesKey = 'mynotes.notes';
 
-  Database? _database;
-  Future<Database>? _openingDatabase;
+  Future<SharedPreferences> get _preferences => SharedPreferences.getInstance();
 
-  Future<Database> get _db {
-    final database = _database;
-    if (database != null) return Future.value(database);
-    return _openingDatabase ??= _openDatabase();
-  }
+  String _passwordHash(String password) =>
+      sha256.convert(utf8.encode(password)).toString();
 
-  Future<Database> _openDatabase() async {
+  Future<List<Map<String, dynamic>>> _readItems(String key) async {
+    final rawValue = (await _preferences).getString(key);
+    if (rawValue == null || rawValue.isEmpty) return [];
+
     try {
-      final databasePath = path.join(await getDatabasesPath(), _databaseName);
-      final database = await openDatabase(
-        databasePath,
-        version: 1,
-        onCreate: (db, _) => _createSchema(db),
-        onOpen: _createSchema,
-      );
-      _database = database;
-      return database;
-    } finally {
-      _openingDatabase = null;
+      return (jsonDecode(rawValue) as List).cast<Map<String, dynamic>>();
+    } on FormatException {
+      return [];
     }
   }
 
-  Future<void> _createSchema(Database db) => db.execute('''
-      CREATE TABLE IF NOT EXISTS $_tableName(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )
-    ''');
-
-  Future<List<Note>> getAll() async {
-    final rows = await (await _db).query(
-      _tableName,
-      orderBy: 'created_at DESC, id DESC',
-    );
-    return rows.map(Note.fromMap).toList();
+  Future<void> _writeItems(String key, List<Map<String, dynamic>> items) async {
+    final saved = await (await _preferences).setString(key, jsonEncode(items));
+    if (!saved) throw StateError('Le stockage local est indisponible.');
   }
 
-  /// Inserts or updates a note without deleting the user's history on error.
-  Future<int> save(Note note) async {
-    final values = note.toMap()..remove('id');
-    final database = await _db;
+  int _nextId(List<Map<String, dynamic>> items) =>
+      items.fold<int>(
+        0,
+        (highest, item) => (item['id'] as num? ?? 0).toInt() > highest
+            ? (item['id'] as num).toInt()
+            : highest,
+      ) +
+      1;
 
-    if (note.id == null) {
-      return database.insert(_tableName, values);
+  Future<int> register({
+    required String username,
+    required String password,
+  }) async {
+    final cleanUsername = username.trim();
+    final users = await _readItems(_usersKey);
+    final usernameTaken = users.any(
+      (user) =>
+          (user['username'] as String).toLowerCase() ==
+          cleanUsername.toLowerCase(),
+    );
+    if (usernameTaken) throw UsernameAlreadyUsedException();
+
+    final userId = _nextId(users);
+    users.add({
+      'id': userId,
+      'username': cleanUsername,
+      'passwordHash': _passwordHash(password),
+    });
+    await _writeItems(_usersKey, users);
+    return userId;
+  }
+
+  Future<int?> authenticate({
+    required String username,
+    required String password,
+  }) async {
+    final cleanUsername = username.trim().toLowerCase();
+    final hash = _passwordHash(password);
+    final users = await _readItems(_usersKey);
+    for (final user in users) {
+      if ((user['username'] as String).toLowerCase() == cleanUsername &&
+          user['passwordHash'] == hash) {
+        return (user['id'] as num).toInt();
+      }
     }
-
-    return database.update(
-      _tableName,
-      values,
-      where: 'id = ?',
-      whereArgs: [note.id],
-    );
+    return null;
   }
 
-  Future<void> delete(int id) async {
-    await (await _db).delete(_tableName, where: 'id = ?', whereArgs: [id]);
+  Future<List<Note>> getAll({required int userId}) async {
+    final notes = await _readItems(_notesKey);
+    final userNotes =
+        notes
+            .where((item) => (item['userId'] as num?)?.toInt() == userId)
+            .map(
+              (item) => Note(
+                id: (item['id'] as num).toInt(),
+                title: item['title'] as String,
+                content: item['content'] as String,
+                createdAt: DateTime.parse(item['createdAt'] as String),
+              ),
+            )
+            .toList()
+          ..sort(
+            (first, second) => second.createdAt.compareTo(first.createdAt),
+          );
+    return userNotes;
+  }
+
+  Future<int> save(Note note, {required int userId}) async {
+    final notes = await _readItems(_notesKey);
+    final noteId = note.id ?? _nextId(notes);
+    final values = {
+      'id': noteId,
+      'userId': userId,
+      'title': note.title,
+      'content': note.content,
+      'createdAt': note.createdAt.toIso8601String(),
+    };
+    final existingIndex = notes.indexWhere(
+      (item) =>
+          (item['id'] as num?)?.toInt() == noteId &&
+          (item['userId'] as num?)?.toInt() == userId,
+    );
+
+    if (existingIndex == -1) {
+      if (note.id != null) throw StateError('Cette note est introuvable.');
+      notes.add(values);
+    } else {
+      notes[existingIndex] = values;
+    }
+    await _writeItems(_notesKey, notes);
+    return noteId;
+  }
+
+  Future<void> delete(int id, {required int userId}) async {
+    final notes = await _readItems(_notesKey);
+    notes.removeWhere(
+      (item) =>
+          (item['id'] as num?)?.toInt() == id &&
+          (item['userId'] as num?)?.toInt() == userId,
+    );
+    await _writeItems(_notesKey, notes);
   }
 }

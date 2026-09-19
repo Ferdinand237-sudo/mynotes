@@ -8,7 +8,10 @@ import 'package:mynotes/widgets/empty_notes_state.dart';
 import 'package:mynotes/widgets/note_card.dart';
 
 class NotesPage extends StatefulWidget {
-  const NotesPage({super.key});
+  const NotesPage({super.key, required this.userId, required this.username});
+
+  final int userId;
+  final String username;
   @override
   State<NotesPage> createState() => _NotesPageState();
 }
@@ -21,7 +24,8 @@ class _NotesPageState extends State<NotesPage> {
     _reload();
   }
 
-  void _reload() => _notes = NotesDatabase.instance.getAll();
+  void _reload() =>
+      _notes = NotesDatabase.instance.getAll(userId: widget.userId);
 
   void _refreshNotes() {
     setState(() {
@@ -32,7 +36,9 @@ class _NotesPageState extends State<NotesPage> {
   Future<void> _openEditor([Note? note]) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => EditorPage(note: note)),
+      MaterialPageRoute(
+        builder: (_) => EditorPage(note: note, userId: widget.userId),
+      ),
     );
     if (mounted) _refreshNotes();
   }
@@ -61,7 +67,7 @@ class _NotesPageState extends State<NotesPage> {
       ),
     );
     if (confirmed == true && note.id != null) {
-      await NotesDatabase.instance.delete(note.id!);
+      await NotesDatabase.instance.delete(note.id!, userId: widget.userId);
       if (mounted) _refreshNotes();
     }
   }
@@ -77,7 +83,7 @@ class _NotesPageState extends State<NotesPage> {
       ),
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.search))],
     ),
-    drawer: const AppDrawer(),
+    drawer: AppDrawer(username: widget.username),
     body: FutureBuilder<List<Note>>(
       future: _notes,
       builder: (context, snapshot) {
